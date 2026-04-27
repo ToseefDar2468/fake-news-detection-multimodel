@@ -13,12 +13,11 @@ export interface RedFlag {
 }
 
 export interface AnalysisResponse {
-  readonly id: string;
-  readonly prediction: AnalysisLabel;
-  readonly confidence: number;
-  readonly explanation: string;
+  readonly prediction: AnalysisLabel | null;
+  readonly confidence: number | null;
+  readonly explanation: string | null;
   readonly redFlags: readonly RedFlag[];
-  readonly analyzedAt: string;
+  readonly message: string;
 }
 
 export interface AnalysisHistoryItem {

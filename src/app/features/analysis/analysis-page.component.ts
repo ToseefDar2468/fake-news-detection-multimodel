@@ -1,3 +1,4 @@
+import { HttpErrorResponse } from '@angular/common/http';
 import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
@@ -22,30 +23,29 @@ import { environment } from '../../../environments/environment';
               </p>
               <h2 class="mt-2 app-section-title">Analyze a news claim with text and image context</h2>
               <p class="mt-3 app-section-copy max-w-3xl">
-                This frontend is prepared for a multimodal pipeline where BERT or RoBERTa handles
-                text features, ResNet or ViT handles image features, and a fused model produces the
-                credibility prediction before an LLM explains the reasoning.
+                The analysis form now sends a real multipart request to the FastAPI backend. Text
+                and image are submitted together so the backend foundation can evolve into the full
+                multimodal detection pipeline.
               </p>
             </div>
 
-            <span
-              class="status-chip"
-              [class.border-emerald-200]="backendConfigured"
-              [class.bg-emerald-50]="backendConfigured"
-              [class.text-emerald-700]="backendConfigured"
-            >
-              {{ backendConfigured ? 'Backend connected' : 'Frontend foundation mode' }}
+            <span class="status-chip border-emerald-200 bg-emerald-50 text-emerald-700">
+              API endpoint configured
             </span>
           </div>
 
-          @if (!backendConfigured) {
-            <div class="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-              FastAPI placeholder: <span class="font-mono">{{ apiBaseUrl }}</span>
-            </div>
-          }
+          <div class="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+            FastAPI base URL: <span class="font-mono">{{ apiBaseUrl }}</span>
+          </div>
         </article>
 
         <article class="app-card p-6">
+          @if (errorMessage()) {
+            <div class="mb-6 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+              {{ errorMessage() }}
+            </div>
+          }
+
           <form class="space-y-6" [formGroup]="analysisForm" (ngSubmit)="submit()">
             <div>
               <label class="app-label" for="news-text">News text</label>
@@ -77,9 +77,13 @@ import { environment } from '../../../environments/environment';
                   <p class="mt-2 text-sm text-rose-600">An image is required.</p>
                 }
 
+                @if (imageSelectionError()) {
+                  <p class="mt-2 text-sm text-rose-600">{{ imageSelectionError() }}</p>
+                }
+
                 <p class="mt-3 text-sm leading-6 text-slate-500">
-                  Use an image that appears alongside the claim so the cross-modal detector can
-                  compare textual and visual evidence later.
+                  The file is sent as multipart form data under the <span class="font-mono">image</span>
+                  field expected by FastAPI.
                 </p>
               </div>
 
@@ -99,7 +103,7 @@ import { environment } from '../../../environments/environment';
                     <div class="flex items-center justify-between gap-3">
                       <div class="min-w-0">
                         <p class="truncate text-sm font-medium text-slate-900">{{ imageName() }}</p>
-                        <p class="text-xs text-slate-500">Ready for analysis request payload</p>
+                        <p class="text-xs text-slate-500">Ready for submission</p>
                       </div>
 
                       <button
@@ -113,7 +117,7 @@ import { environment } from '../../../environments/environment';
                   </div>
                 } @else {
                   <div class="mt-4 flex h-52 items-center justify-center rounded-2xl bg-white text-center text-sm leading-6 text-slate-500">
-                    Upload an image to inspect visual context beside the news text.
+                    Upload an image to include visual context in the request.
                   </div>
                 }
               </div>
@@ -121,15 +125,19 @@ import { environment } from '../../../environments/environment';
 
             <div class="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-slate-50 px-4 py-4">
               <p class="text-sm leading-6 text-slate-600">
-                Both text and image are required so the future model can perform multimodal fusion.
+                The current backend returns placeholder AI fields while the model layer is under
+                development.
               </p>
 
               <button
                 type="submit"
-                class="inline-flex items-center justify-center rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                class="inline-flex items-center justify-center gap-2 rounded-full bg-slate-950 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
                 [disabled]="analysisForm.invalid || isSubmitting()"
               >
-                {{ isSubmitting() ? 'Analyzing...' : 'Analyze News' }}
+                @if (isSubmitting()) {
+                  <span class="h-4 w-4 animate-spin rounded-full border-2 border-white/70 border-t-transparent"></span>
+                }
+                <span>{{ isSubmitting() ? 'Analyzing...' : 'Analyze News' }}</span>
               </button>
             </div>
           </form>
@@ -153,9 +161,9 @@ export class AnalysisPageComponent {
   private previewUrl: string | null = null;
 
   protected readonly apiBaseUrl = environment.apiBaseUrl;
-  protected readonly backendConfigured = environment.enableBackendIntegration;
   protected readonly isSubmitting = signal(false);
   protected readonly errorMessage = signal<string | null>(null);
+  protected readonly imageSelectionError = signal<string | null>(null);
   protected readonly analysisResult = signal<AnalysisResponse | null>(null);
   protected readonly imagePreviewUrl = signal<string | null>(null);
   protected readonly imageName = signal('');
@@ -183,6 +191,7 @@ export class AnalysisPageComponent {
     const inputElement = event.target as HTMLInputElement;
     const file = inputElement.files?.[0] ?? null;
 
+    this.clearFormFeedback();
     this.revokePreviewUrl();
 
     if (!file) {
@@ -193,8 +202,19 @@ export class AnalysisPageComponent {
       return;
     }
 
+    if (!file.type.startsWith('image/')) {
+      this.analysisForm.controls.image.setValue(null);
+      this.analysisForm.controls.image.markAsTouched();
+      this.imageSelectionError.set('Unsupported image type. Please upload a valid image file.');
+      this.imagePreviewUrl.set(null);
+      this.imageName.set('');
+      inputElement.value = '';
+      return;
+    }
+
     this.previewUrl = URL.createObjectURL(file);
     this.analysisForm.controls.image.setValue(file);
+    this.analysisForm.controls.image.markAsTouched();
     this.analysisForm.controls.image.updateValueAndValidity();
     this.imagePreviewUrl.set(this.previewUrl);
     this.imageName.set(file.name);
@@ -207,11 +227,17 @@ export class AnalysisPageComponent {
     this.analysisForm.controls.image.updateValueAndValidity();
     this.imageName.set('');
     this.imagePreviewUrl.set(null);
+    this.imageSelectionError.set(null);
     this.revokePreviewUrl();
   }
 
   protected submit(): void {
+    if (this.isSubmitting()) {
+      return;
+    }
+
     this.submitAttempted.set(true);
+    this.clearFormFeedback();
 
     if (this.analysisForm.invalid) {
       this.analysisForm.markAllAsTouched();
@@ -225,8 +251,6 @@ export class AnalysisPageComponent {
     }
 
     this.isSubmitting.set(true);
-    this.errorMessage.set(null);
-    this.analysisResult.set(null);
 
     this.analysisService
       .analyzeNews({
@@ -239,8 +263,14 @@ export class AnalysisPageComponent {
       )
       .subscribe({
         next: (response) => this.analysisResult.set(response),
-        error: (error: unknown) => this.errorMessage.set(this.toErrorMessage(error)),
+        error: (error: unknown) => this.errorMessage.set(this.toUserFacingErrorMessage(error)),
       });
+  }
+
+  private clearFormFeedback(): void {
+    this.errorMessage.set(null);
+    this.analysisResult.set(null);
+    this.imageSelectionError.set(null);
   }
 
   private revokePreviewUrl(): void {
@@ -252,11 +282,27 @@ export class AnalysisPageComponent {
     this.previewUrl = null;
   }
 
-  private toErrorMessage(error: unknown): string {
-    if (error instanceof Error) {
-      return error.message;
+  private toUserFacingErrorMessage(error: unknown): string {
+    if (!(error instanceof HttpErrorResponse)) {
+      return 'The request could not be completed. Please try again.';
     }
 
-    return 'Analysis request failed before a response was returned.';
+    if (error.status === 0) {
+      return 'The backend could not be reached. Make sure FastAPI is running on http://localhost:8000.';
+    }
+
+    if (error.status === 415) {
+      return 'The selected file type is not supported by the backend. Please upload a valid image file.';
+    }
+
+    if (error.status === 422) {
+      return 'The backend rejected the request. Please provide news text and a valid image, then try again.';
+    }
+
+    if (error.status >= 500) {
+      return 'The server encountered an error while processing the analysis request. Please try again.';
+    }
+
+    return 'The analysis request could not be completed. Please verify the input and try again.';
   }
 }

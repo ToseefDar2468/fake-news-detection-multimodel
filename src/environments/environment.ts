@@ -1,5 +1,4 @@
 export const environment = {
   production: true,
-  apiBaseUrl: 'https://api.example.com/v1',
-  enableBackendIntegration: false,
+  apiBaseUrl: 'http://localhost:8000/api',
 } as const;
